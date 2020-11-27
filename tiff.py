@@ -1,13 +1,18 @@
-import rasterio
+import os
 import warnings
+from rasterio import rasterio, shutil
 from pyproj.transformer import Transformer
 from pyproj.crs import CRS
 from geopy.point import Point
 
 
-class TiffImage:
+class GeoTiff:
     def __init__(self, path):
-        self.file = rasterio.open(path)
+        with warnings.catch_warnings(record=True) as w: # отлавливаем ошибки
+            self.path = path
+            self.file = rasterio.open(path)
+            if len(w) > 0 and issubclass(w[-1].category, rasterio.errors.NotGeoreferencedWarning): # если файл имеет контрольные точки
+                self.file = rasterio.vrt.WarpedVRT(self.file, src_crs=self.file.gcps[1], scrs=self.file.gcps[1])    # приводим его к виду georeferenced
         
 
     # получить размеры изображения
@@ -27,18 +32,35 @@ class TiffImage:
 
 
     # получить координаты по индексу
-    def get_coordinates_by_index(self, width, height):
+    def get_coordinate_by_index(self, width, height):
         row, col = self.file.xy(height, width)
-        print(row, col)
-        row, col = self.file.transform * (width, height)
-        print(row, col)
         return self._transform_to_coordinates(row, col)
 
 
     # получить индексы координаты
-    def get_index_by_coordinates(self, coordinate):
+    def get_index_by_coordinate(self, coordinate):
         x, y = self._transform_to_meters(coordinate)
         return self.file.index(x, y)
+
+
+    # получить numpy отрезок снимка по индексам
+    def get_map_by_indexes(self, width1, height1, width2, height2):
+        return self.file.read(1)[width1:width2, height1:height2]
+
+
+    # получить numpy отрезок снимка по координатам
+    def get_map_by_coordinates(self, coordinate1, coordinate2):
+        width1, height1 = self.get_index_by_coordinate(coordinate1)
+        width2, height2 = self.get_index_by_coordinate(coordinate2)
+        return self.get_map_by_indexes(width1, height1, width2, height2)
+
+
+    # сохранить снимок в виде Georeferenced (по умолчанию перезаписать)
+    def save_file_as_georeferenced(self, path=None):
+        if path is None:
+            path = self.path
+
+        shutil.copy(self.file, path, driver='GTiff')
 
 
     # перевести метрическую систему координат в географическую
