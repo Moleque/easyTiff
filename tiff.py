@@ -4,6 +4,7 @@ from rasterio import rasterio, shutil
 from pyproj.transformer import Transformer
 from pyproj.crs import CRS
 from geopy.point import Point
+from PIL import Image
 
 
 class GeoTiff:
@@ -13,7 +14,7 @@ class GeoTiff:
             self.file = rasterio.open(path)
             if len(w) > 0 and issubclass(w[-1].category, rasterio.errors.NotGeoreferencedWarning): # если файл имеет контрольные точки
                 self.file = rasterio.vrt.WarpedVRT(self.file, src_crs=self.file.gcps[1], scrs=self.file.gcps[1])    # приводим его к виду georeferenced
-        
+
 
     # получить размеры изображения
     def get_size(self):
@@ -53,6 +54,18 @@ class GeoTiff:
         width1, height1 = self.get_index_by_coordinate(coordinate1)
         width2, height2 = self.get_index_by_coordinate(coordinate2)
         return self.get_map_by_indexes(width1, height1, width2, height2)
+
+
+    # сохранить часть изображения по индексам
+    def save_image_by_indexes(self, path, width1, height1, width2, height2):
+        image_map = self.get_map_by_indexes(width1, height1, width2, height2)
+        Image.fromarray(image_map, mode='L').save(path)
+
+
+    # сохранить часть изображения по координатам
+    def save_image_by_coordinates(self, path, coordinate1, coordinate2):
+        image_map = self.get_map_by_coordinates(coordinate1, coordinate2)
+        Image.fromarray(image_map, mode='L').save(path)
 
 
     # сохранить снимок в виде Georeferenced (по умолчанию перезаписать)
