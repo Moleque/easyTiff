@@ -1,1 +1,1 @@
-# easyTiff
+# GeoTiff utils package
