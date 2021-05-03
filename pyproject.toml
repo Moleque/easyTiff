@@ -1,11 +1,11 @@
 [tool.poetry]
 name = "tiff"
-version = "0.0.2"
+version = "0.0.3"
 description = "GeoTiff utils package"
 authors = ["Moleque <molecada@yandex.ru>"]
 
 [tool.poetry.dependencies]
-python = "^3.6"
+python = "^3.7"
 numpy = "^1.20.2"
 rasterio = "^1.2.3"
 pyproj = "^3.0.1"
