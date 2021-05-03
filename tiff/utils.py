@@ -1,7 +1,7 @@
 from rasterio import rasterio, shutil
 import numpy as np
 
-from tiff import GeoTiff
+from .tiff import GeoTiff
 
 np_type = "uint8"
 transparency = 255
