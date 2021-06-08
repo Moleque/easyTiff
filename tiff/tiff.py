@@ -130,7 +130,7 @@ class GeoTiff:
     def save_image_by_coordinates(self, path, coordinate1, coordinate2, mode="L"):
         width1, height1 = self.get_index_by_coordinate(coordinate1)
         width2, height2 = self.get_index_by_coordinate(coordinate2)
-        return self.save_image_by_indexes(width1, height1, width2, height2, mode)
+        return self.save_image_by_indexes(path, width1, height1, width2, height2, mode)
 
 
     # сохранить снимок в виде Georeferenced (по умолчанию перезаписать)
