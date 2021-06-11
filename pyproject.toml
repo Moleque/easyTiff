@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "tiff"
-version = "0.0.7"
+version = "0.0.9"
 description = "GeoTiff utils package"
 authors = ["Moleque <molecada@yandex.ru>"]
 
