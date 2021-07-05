@@ -1,4 +1,3 @@
-import os
 import warnings
 from rasterio import rasterio, shutil
 from pyproj.transformer import Transformer
@@ -6,6 +5,13 @@ from pyproj.crs import CRS
 from geopy.point import Point
 from PIL import Image
 import numpy as np
+
+def check_value(value, max):
+    if value < 0:
+        return 0
+    if value > max:
+        return max
+    return value
 
 class GeoTiff:
     def __init__(self, path):
@@ -18,7 +24,7 @@ class GeoTiff:
 
     # получить размеры изображения
     def get_size(self):
-        return self.file.width, self.file.height
+        return self.file.height, self.file.width
 
 
     def get_crs(self):
@@ -36,7 +42,7 @@ class GeoTiff:
 
     # получить координаты крайних точек изображения
     def get_corner_coordinates(self):
-        width, height = self.get_size()
+        height, width = self.get_size()
         return [
             self._transform_to_coordinates(*self.file.xy(0, 0)),
             self._transform_to_coordinates(*self.file.xy(0, width)),
@@ -53,8 +59,14 @@ class GeoTiff:
 
     # получить индексы координаты
     def get_index_by_coordinate(self, coordinate):
+        height_max, width_max = self.get_size()
         x, y = self._transform_to_meters(coordinate)
-        return self.file.index(x, y)
+        height, width = self.file.index(y, x)
+        
+        height = check_value(height, height_max)
+        width = check_value(width, width_max)
+        
+        return height, width
 
 
     # получить numpy отрезок снимка по индексам
@@ -71,8 +83,8 @@ class GeoTiff:
 
     # получить numpy отрезок снимка по координатам
     def get_map_by_coordinates(self, coordinate1, coordinate2, channel=1):
-        width1, height1 = self.get_index_by_coordinate(coordinate1)
-        width2, height2 = self.get_index_by_coordinate(coordinate2)
+        height1, width1 = self.get_index_by_coordinate(coordinate1)
+        height2, width2 = self.get_index_by_coordinate(coordinate2)
         return self.get_map_by_indexes(width1, height1, width2, height2, channel)
 
 
@@ -80,7 +92,7 @@ class GeoTiff:
     def change_transparency(self, transparency=255, pixel_value=0):
         if self.file.count < 4:
             return
-        width, height = self.get_size()
+        height, width = self.get_size()
         tr = np.zeros((height, width), dtype=self.get_dtype())
         for band in range(1, self.file.count):
             image_map = self.get_map_by_indexes(0, 0, width, height, band)
@@ -93,7 +105,7 @@ class GeoTiff:
 
     # сохранить часть изображения по индексам
     def save_image_by_indexes(self, path, width1, height1, width2, height2, shape=False):
-        width, height = self.get_size()
+        height, width = self.get_size()
         if width1 > width2 or height1 > height2 or width1 > width or height1 > height:
             return False
         if width2 > width:
@@ -128,8 +140,8 @@ class GeoTiff:
 
     # сохранить часть изображения по координатам
     def save_image_by_coordinates(self, path, coordinate1, coordinate2, mode="L"):
-        width1, height1 = self.get_index_by_coordinate(coordinate1)
-        width2, height2 = self.get_index_by_coordinate(coordinate2)
+        height1, width1 = self.get_index_by_coordinate(coordinate1)
+        height2, width2 = self.get_index_by_coordinate(coordinate2)
         return self.save_image_by_indexes(path, width1, height1, width2, height2, mode)
 
 
@@ -143,6 +155,8 @@ class GeoTiff:
 
     # перевести метрическую систему координат в географическую
     def _transform_to_coordinates(self, x, y):
+        if self.file.crs == CRS("EPSG:4326"):
+            return Point(y, x)
         transformer = Transformer.from_proj(self.file.crs, CRS("EPSG:4326"))
         lat, lon = transformer.transform(x, y)
         lon = abs(lon+90)
@@ -158,4 +172,6 @@ class GeoTiff:
     def _transform_to_meters(self, coordinate):
         transformer = Transformer.from_crs(CRS("EPSG:4326"), self.file.crs)
         x, y = transformer.transform(coordinate.latitude, coordinate.longitude)
-        return y, x
+        if self.file.crs != CRS("EPSG:4326"):
+            return y, x
+        return x, y
