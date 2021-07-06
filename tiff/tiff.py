@@ -75,7 +75,7 @@ class GeoTiff:
 
 
     # установить numpy отрезок снимка по индексам TODO check
-    def set_map_by_indexes(self, width, height, slice_map, channel=1):
+    def set_map_by_indexes(self, width1, height1, width2, height2, slice_map, channel=1):
         channel_map = self.file.read(channel)
         channel_map[height1:height2, width1:width2] = slice_map
         return self.file.write(channel_map, channel)
