@@ -1,4 +1,4 @@
-import warnings
+import warnings, os
 from rasterio import rasterio, shutil
 from pyproj.transformer import Transformer
 from pyproj.crs import CRS
@@ -17,9 +17,41 @@ class GeoTiff:
     def __init__(self, path):
         with warnings.catch_warnings(record=True) as w: # отлавливаем ошибки
             self.path = path
-            self.file = rasterio.open(path)
+            self.path_writable = "writable_temp.tiff"
+
+            self.file = rasterio.open(path) 
+            
             if len(w) > 0 and issubclass(w[-1].category, rasterio.errors.NotGeoreferencedWarning): # если файл имеет контрольные точки
                 self.file = rasterio.vrt.WarpedVRT(self.file, src_crs=self.file.gcps[1], scrs=self.file.gcps[1])    # приводим его к виду georeferenced
+
+        self._create_writable_file()
+
+    
+    def _create_writable_file(self):
+        self.writable_file = rasterio.open(
+            self.path_writable, "w",
+            driver="GTiff",
+            height=self.file.height,
+            width=self.file.width,
+            count=self.file.count,
+            dtype=self.file.read(1).dtype,
+            crs=self.file.crs,
+            transform=self.file.transform,
+        )
+
+        for channel in range(1, self.file.count + 1):
+            channel_map = self.file.read(channel)
+            self.writable_file.write(channel_map, channel)
+
+
+    def __del__(self):
+        try:
+            self.file.close()
+            self.writable_file.close()
+        except AttributeError:
+            pass
+        if os.path.exists(self.path_writable):
+            os.remove(self.path_writable)
 
 
     # получить размеры изображения
@@ -74,11 +106,42 @@ class GeoTiff:
         return self.file.read(channel)[height1:height2, width1:width2]
 
 
+    # получить numpy отрезок снимка по индексам
+    def get_stack_by_indexes(self, width1, height1, width2, height2):
+        if self.file.count == 1:
+            image_map = self.get_map_by_indexes(width1, height1, width2, height2)
+        elif self.file.count == 3:
+            image_map = np.stack((
+                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 1), (height2-height1, width2-width1, 1)), 
+                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 2), (height2-height1, width2-width1, 1)),
+                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 3), (height2-height1, width2-width1, 1)),
+            ), axis=2)
+        else:
+            image_map = np.stack((
+                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 1), (height2-height1, width2-width1, 1)), 
+                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 2), (height2-height1, width2-width1, 1)),
+                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 3), (height2-height1, width2-width1, 1)),
+                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 4), (height2-height1, width2-width1, 1)),
+            ), axis=2)
+        return image_map
+
+
     # установить numpy отрезок снимка по индексам TODO check
     def set_map_by_indexes(self, width1, height1, width2, height2, slice_map, channel=1):
         channel_map = self.file.read(channel)
         channel_map[height1:height2, width1:width2] = slice_map
-        return self.file.write(channel_map, channel)
+        return self.writable_file.write(channel_map, channel)
+
+    
+    # установить numpy отрезок снимка по индексам
+    def set_stack_by_indexes(self, width1, height1, width2, height2, slice_map):
+        if self.file.count == 1:
+            self.set_map_by_indexes(width1, height1, width2, height2, slice_map)
+        else:
+            maps = np.split(slice_map, self.file.count, axis=2)
+            for map in maps:
+                map = np.reshape(map, (width2-width1, height2-height1))
+                self.set_map_by_indexes(width1, height1, width2, height2, map)
 
 
     # получить numpy отрезок снимка по координатам
@@ -108,6 +171,7 @@ class GeoTiff:
         height, width = self.get_size()
         if width1 > width2 or height1 > height2 or width1 > width or height1 > height:
             return False
+        
         if width2 > width:
             if shape:
                 return False
@@ -116,25 +180,16 @@ class GeoTiff:
             if shape:
                 return False
             height2 = height
+        
         if self.file.count == 1:
             mode = "L"
-            image_map = self.get_map_by_indexes(width1, height1, width2, height2)
         elif self.file.count == 3:
             mode = "RGB"
-            image_map = np.stack((
-                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 1), (height2-height1, width2-width1, 1)), 
-                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 2), (height2-height1, width2-width1, 1)),
-                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 3), (height2-height1, width2-width1, 1)),
-            ), axis=2)
         else:
             mode = "RGBA"
-            image_map = np.stack((
-                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 1), (height2-height1, width2-width1, 1)), 
-                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 2), (height2-height1, width2-width1, 1)),
-                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 3), (height2-height1, width2-width1, 1)),
-                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 4), (height2-height1, width2-width1, 1)),
-            ), axis=2)
-        Image.fromarray(image_map, mode=mode).save(path)
+        
+        stack = self.get_stack_by_indexes(width1, height1, width2, height2)
+        Image.fromarray(stack, mode=mode).save(path)
         return True
 
 
@@ -150,6 +205,14 @@ class GeoTiff:
         if path is None:
             path = self.path
         shutil.copy(self.file, path, driver='GTiff')
+        return True
+
+
+    # сохранить writable снимок (по умолчанию перезаписать)
+    def save_file(self, path=None):
+        if path is None:
+            path = self.path
+        shutil.copy(self.writable_file, path, driver='GTiff')
         return True
 
 
