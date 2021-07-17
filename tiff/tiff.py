@@ -1,10 +1,13 @@
 import warnings, os
+import numpy as np
+
 from rasterio import rasterio, shutil
+from rasterio.windows import Window
 from pyproj.transformer import Transformer
 from pyproj.crs import CRS
 from geopy.point import Point
 from PIL import Image
-import numpy as np
+
 
 def check_value(value, max):
     if value < 0:
@@ -13,28 +16,29 @@ def check_value(value, max):
         return max
     return value
 
+
 class GeoTiff:
     def __init__(self, path):
         with warnings.catch_warnings(record=True) as w: # отлавливаем ошибки
             self.path = path
             self.path_writable = "writable_temp.tiff"
 
-            self.file = rasterio.open(path) 
-            
-            if len(w) > 0 and issubclass(w[-1].category, rasterio.errors.NotGeoreferencedWarning): # если файл имеет контрольные точки
-                self.file = rasterio.vrt.WarpedVRT(self.file, src_crs=self.file.gcps[1], scrs=self.file.gcps[1])    # приводим его к виду georeferenced
+            self.file = rasterio.open(path)
 
-        self._create_writable_file()
+            if (len(w) > 0 and issubclass(w[-1].category, rasterio.errors.NotGeoreferencedWarning)) or self.file.crs is None: # если файл имеет контрольные точки
+                self.file = rasterio.vrt.WarpedVRT(self.file, src_crs=self.file.gcps[1], scrs=self.file.gcps[1])    # приводим его к виду georeferenced
+            else:   # TODO: нужно понять, нужен ли файл записи для файлов с контрольными точками
+                self._create_writable_file()
 
     
     def _create_writable_file(self):
         self.writable_file = rasterio.open(
             self.path_writable, "w",
-            driver="GTiff",
+            driver=self.file.driver,
             height=self.file.height,
             width=self.file.width,
             count=self.file.count,
-            dtype=self.file.read(1).dtype,
+            dtype=self.file.profile["dtype"],
             crs=self.file.crs,
             transform=self.file.transform,
         )
@@ -67,9 +71,13 @@ class GeoTiff:
         return self.file.transform
 
 
+    def get_count(self):
+        return self.file.count
+
+
     # получить тип данных пикселя
     def get_dtype(self):
-        return self.file.read(1).dtype
+        return self.file.profile["dtype"]
 
 
     # получить координаты крайних точек изображения
@@ -84,7 +92,7 @@ class GeoTiff:
 
 
     # получить координаты по индексу
-    def get_coordinate_by_index(self, width, height):
+    def get_coordinate_by_index(self, height, width):
         row, col = self.file.xy(height, width)
         return self._transform_to_coordinates(row, col)
 
@@ -102,53 +110,55 @@ class GeoTiff:
 
 
     # получить numpy отрезок снимка по индексам
-    def get_map_by_indexes(self, width1, height1, width2, height2, channel=1):
-        return self.file.read(channel)[height1:height2, width1:width2]
+    def get_map_by_indexes(self, height1, width1, height2, width2, channel=1):
+        return self.file.read(channel, window=Window(width1, height1, width2, height2))
 
 
     # получить numpy отрезок снимка по индексам
-    def get_stack_by_indexes(self, width1, height1, width2, height2):
+    def get_stack_by_indexes(self, height1, width1, height2, width2):
         if self.file.count == 1:
-            image_map = self.get_map_by_indexes(width1, height1, width2, height2)
+            image_map = self.get_map_by_indexes(height1, width1, height2, width2)
         elif self.file.count == 3:
             image_map = np.stack((
-                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 1), (height2-height1, width2-width1, 1)), 
-                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 2), (height2-height1, width2-width1, 1)),
-                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 3), (height2-height1, width2-width1, 1)),
+                np.reshape(self.get_map_by_indexes(height1, width1, height2, width2, 1), (height2-height1, width2-width1, 1)), 
+                np.reshape(self.get_map_by_indexes(height1, width1, height2, width2, 2), (height2-height1, width2-width1, 1)),
+                np.reshape(self.get_map_by_indexes(height1, width1, height2, width2, 3), (height2-height1, width2-width1, 1)),
             ), axis=2)
         else:
             image_map = np.stack((
-                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 1), (height2-height1, width2-width1, 1)), 
-                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 2), (height2-height1, width2-width1, 1)),
-                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 3), (height2-height1, width2-width1, 1)),
-                np.reshape(self.get_map_by_indexes(width1, height1, width2, height2, 4), (height2-height1, width2-width1, 1)),
+                np.reshape(self.get_map_by_indexes(height1, width1, height2, width2, 1), (height2-height1, width2-width1, 1)), 
+                np.reshape(self.get_map_by_indexes(height1, width1, height2, width2, 2), (height2-height1, width2-width1, 1)),
+                np.reshape(self.get_map_by_indexes(height1, width1, height2, width2, 3), (height2-height1, width2-width1, 1)),
+                np.reshape(self.get_map_by_indexes(height1, width1, height2, width2, 4), (height2-height1, width2-width1, 1)),
             ), axis=2)
         return image_map
 
 
     # установить numpy отрезок снимка по индексам TODO check
-    def set_map_by_indexes(self, width1, height1, width2, height2, slice_map, channel=1):
+    def set_map_by_indexes(self, height1, width1, height2, width2, slice_map, channel=1):
         channel_map = self.file.read(channel)
         channel_map[height1:height2, width1:width2] = slice_map
         return self.writable_file.write(channel_map, channel)
 
+        # return self.writable_file.write(slice_map, window=Window(width1, height1, width2, height2), indexes=channel)
+
     
     # установить numpy отрезок снимка по индексам
-    def set_stack_by_indexes(self, width1, height1, width2, height2, slice_map):
+    def set_stack_by_indexes(self, height1, width1, height2, width2, slice_map):
         if self.file.count == 1:
-            self.set_map_by_indexes(width1, height1, width2, height2, slice_map)
+            self.set_map_by_indexes(height1, width1, height2, width2, slice_map)
         else:
             maps = np.split(slice_map, self.file.count, axis=2)
             for map in maps:
                 map = np.reshape(map, (width2-width1, height2-height1))
-                self.set_map_by_indexes(width1, height1, width2, height2, map)
+                self.set_map_by_indexes(height1, width1, height2, width2, map)
 
 
     # получить numpy отрезок снимка по координатам
     def get_map_by_coordinates(self, coordinate1, coordinate2, channel=1):
         height1, width1 = self.get_index_by_coordinate(coordinate1)
         height2, width2 = self.get_index_by_coordinate(coordinate2)
-        return self.get_map_by_indexes(width1, height1, width2, height2, channel)
+        return self.get_map_by_indexes(height1, width1, height2, width2, channel)
 
 
     # изменить значение прозрачности
@@ -158,7 +168,7 @@ class GeoTiff:
         height, width = self.get_size()
         tr = np.zeros((height, width), dtype=self.get_dtype())
         for band in range(1, self.file.count):
-            image_map = self.get_map_by_indexes(0, 0, width, height, band)
+            image_map = self.get_map_by_indexes(0, 0, height, width, band)
             for h in range(height):
                 for w in range(width):
                     if image_map[h][w] == pixel_value:
@@ -167,19 +177,19 @@ class GeoTiff:
 
 
     # сохранить часть изображения по индексам
-    def save_image_by_indexes(self, path, width1, height1, width2, height2, shape=False):
+    def save_image_by_indexes(self, path, height1, width1, height2, width2, shape=False):
         height, width = self.get_size()
-        if width1 > width2 or height1 > height2 or width1 > width or height1 > height:
+        if height1 > height2 or width1 > width2 or height1 > height or width1 > width:
             return False
         
-        if width2 > width:
-            if shape:
-                return False
-            width2 = width
         if height2 > height:
             if shape:
                 return False
             height2 = height
+        if width2 > width:
+            if shape:
+                return False
+            width2 = width
         
         if self.file.count == 1:
             mode = "L"
@@ -188,7 +198,7 @@ class GeoTiff:
         else:
             mode = "RGBA"
         
-        stack = self.get_stack_by_indexes(width1, height1, width2, height2)
+        stack = self.get_stack_by_indexes(height1, width1, height2, width2)
         Image.fromarray(stack, mode=mode).save(path)
         return True
 
@@ -197,7 +207,7 @@ class GeoTiff:
     def save_image_by_coordinates(self, path, coordinate1, coordinate2, mode="L"):
         height1, width1 = self.get_index_by_coordinate(coordinate1)
         height2, width2 = self.get_index_by_coordinate(coordinate2)
-        return self.save_image_by_indexes(path, width1, height1, width2, height2, mode)
+        return self.save_image_by_indexes(path, height1, width1, height2, width2, mode)
 
 
     # сохранить снимок в виде Georeferenced (по умолчанию перезаписать)
